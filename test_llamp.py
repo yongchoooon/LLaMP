@@ -93,7 +93,8 @@ def main():
     for i in range(1, 4):
 
         try:
-            args.load = ospj(logpath,'ckpt_remodel_trimmed_{}.t7'.format(i))
+            # args.load = ospj(logpath,'ckpt_remodel_trimmed_{}.t7'.format(i))
+            args.load = ospj(logpath,'ckpt_last_{}.t7'.format(i))
             state_dict = torch.load(args.load, map_location='cpu')
         except:
             print("Failed to load model from checkpoint...")

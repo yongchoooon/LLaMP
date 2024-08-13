@@ -191,7 +191,7 @@ class MetaDataset(Dataset):
             dataset_args.SUBSAMPLE_CLASSES = 'all'
 
         self.dataset = DATASET_CLASSMAP[dataset](dataset_args)
-        self.template = CUSTOM_TEMPLATES[dataset]
+        self.template = CUSTOM_TEMPLATES[dataset] # "a photo of a {}, a type of pet."
 
         self.classnames = self.dataset.classnames
         self.idx2label = self.dataset.lab2cname
@@ -205,7 +205,7 @@ class MetaDataset(Dataset):
         if phase == 'train':
             self.dataset = self.dataset.train_x
         else:
-            self.dataset = self.dataset.test
+            self.dataset = self.dataset.test # 이거때문에 base_testset, new_testset 모두 여기서 뽑히는 것
 
 
     def __getitem__(self, index):

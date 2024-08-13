@@ -1,2 +1,10 @@
 *.pyc
 __pycache__
+.hypothesis/
+
+all_data/
+dassl/
+logs/
+.vscode/
+
+*.ipynb

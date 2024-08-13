@@ -118,58 +118,58 @@ def main():
     local_parser = deepspeed.add_config_arguments(parser)
     args = local_parser.parse_args()
 
-    device = torch.device(args.device)
+    device = torch.device(args.device) # 'cuda'
 
-    load_args(args.config, args)
+    load_args(args.config, args) # 'configs/llava/zero-shot/$1_llama_7b.yml'
 
 
     project_name_suffix = "-{class_emb}-{lr:.1E}-{lr_scheuler}-{prompt_type}-{num_prior_tokens}Pr{llm_prompt_depth}x{num_llm_prompts}P{num_text_ctx}T{num_vis_ctx}V-{bias}Init-{num_template}xTemplate-{dist_type}{lambda_dist:.1f}xDist{randaug}-{betas}-WD{wd}".format(
-        class_emb='{:d}X{}'.format(args.num_decoder_layers, "decode"),
-        lr=Decimal(args.lr),
-        lr_scheuler=args.lr_scheduler if args.lr_scheduler else "constant",
-        prompt_type=args.prompt_type,
-        num_prior_tokens=args.num_prior_tokens,
-        llm_prompt_depth=args.llm_prompt_depth,
-        num_llm_prompts=args.num_llm_prompts,
-        num_text_ctx=args.num_text_ctx,
-        num_vis_ctx=args.num_vis_ctx,
-        dist_type=args.distillation_type,
-        lambda_dist=args.lambda_dist,
-        bias='Bias' if args.token_bias else 'No',
-        num_template=args.num_text_template,
-        randaug='-RandAug' if args.rand_aug else '',
-        betas='-'.join([str(b) for b in args.betas]),
-        wd=args.weight_decay,
+        class_emb='{:d}X{}'.format(args.num_decoder_layers, "decode"), # 1
+        lr=Decimal(args.lr), # '2e-4'
+        lr_scheuler=args.lr_scheduler if args.lr_scheduler else "constant", # 'cosine'
+        prompt_type=args.prompt_type, # 'suffix'
+        num_prior_tokens=args.num_prior_tokens, # 100
+        llm_prompt_depth=args.llm_prompt_depth, # 9
+        num_llm_prompts=args.num_llm_prompts, # 16
+        num_text_ctx=args.num_text_ctx, # 4
+        num_vis_ctx=args.num_vis_ctx, # 4
+        dist_type=args.distillation_type, # 'soft'
+        lambda_dist=args.lambda_dist, # 2.5
+        bias='Bias' if args.token_bias else 'No', # 없음
+        num_template=args.num_text_template, # 11
+        randaug='-RandAug' if args.rand_aug else '', # 없음
+        betas='-'.join([str(b) for b in args.betas]), # [0.9, 0.999]
+        wd=args.weight_decay, # 5e-5
     )
 
-    project_name_suffix  = project_name_suffix + '-Skip' if args.decoder_skip_connection else project_name_suffix
-    project_name_suffix  = project_name_suffix + '-ConcatPrior' if args.concat_fixed_prompts else project_name_suffix
+    project_name_suffix  = project_name_suffix + '-Skip' if args.decoder_skip_connection else project_name_suffix # 없음
+    project_name_suffix  = project_name_suffix + '-ConcatPrior' if args.concat_fixed_prompts else project_name_suffix # 없음
 
-    args.name = args.name + project_name_suffix 
+    args.name = args.name + project_name_suffix # 'EXAMPLE_PROJECT'
 
-    logpath = os.path.join(args.cv_dir, args.name)
+    logpath = os.path.join(args.cv_dir, args.name) # 'logs/'
     if is_main_process():
         os.makedirs(logpath, exist_ok=True)
         save_args(args, logpath, args.config)
 
-    with open(args.deepspeed_config, 'r') as fp:
+    with open(args.deepspeed_config, 'r') as fp: # 'deepspeed_config/zero2_a100_40g.json'
         deepspeed_config = json.load(fp) 
 
     dschf = HfDeepSpeedConfig(deepspeed_config)
 
     # init deepspeed
 
-    model = AutoModelForCausalLM.from_pretrained(args.model_base, device_map='cpu')
+    model = AutoModelForCausalLM.from_pretrained(args.model_base, device_map='cpu') # 'meta-llama/Llama-2-7b-chat-hf'
     tokenizer = AutoTokenizer.from_pretrained(args.model_base)
 
     # Get dataset
     trainset = MetaDataset(
         phase='train',
-        dataset=args.dataset,
-        num_shots=args.coop_num_shots,
-        seed=args.coop_seed,
-        num_template=args.num_text_template,
-        rand_aug=args.rand_aug
+        dataset=args.dataset, # OxfordPets
+        num_shots=args.coop_num_shots, # 16
+        seed=args.coop_seed, # 1
+        num_template=args.num_text_template, # 11
+        rand_aug=args.rand_aug # False
     )
 
     base_testset = MetaDataset(
@@ -220,14 +220,14 @@ def main():
         num_workers=args.workers,
         sampler=sampler)
 
-    if args.freeze_vit:
+    if args.freeze_vit: # False -> CLIP Image Encoder 학습 시킬지 말지 (= 당연히 학습시킴)
         min_lrs = [1e-5]
         base_lrs= [args.lr]
     else:
         min_lrs = [1e-5, max(args.lora_lr / args.lr * 1e-5, 5e-6)]
         base_lrs= [args.lr, args.lora_lr]
 
-    if args.lr_scheduler:
+    if args.lr_scheduler: # 'cosine'
         if args.lr_scheduler == 'cosine':
             lr_scheduler = get_cosine_schedule_with_warmup(
                 optimizer,
@@ -265,7 +265,7 @@ def main():
     )
     tokenizer.padding_side = "left"  # Allow batched inference
 
-    for epoch in tqdm(range(start_epoch, args.max_epochs), desc = 'Current epoch'):
+    for epoch in tqdm(range(start_epoch, args.max_epochs), desc = 'Current epoch'): # max_epochs 20
         trainloader.sampler.set_epoch(epoch)
         train(epoch, model_engine, tokenizer, trainloader, False, lr_scheduler, device)
         if is_main_process():
@@ -297,7 +297,14 @@ def train(epoch, model_engine, tokenizer, trainloader, ema, lr_scheduler, device
         'loss_l1': 0.0,
         'loss_dist': 0.0,
     } 
+
+    # len(trainloader) = 76 => 304 / batch size 4 = 76
+    # base의 경우 19개 class, 그리고 16 shot (coop_num_shots) => 19 * 16 = 304 (학습 이미지 수)
+
     for idx, data in tqdm(enumerate(trainloader), total=len(trainloader), desc = 'Training'):
+        # 근데 여기서 data는 3개짜리 list -> [torch.Size([4, 3, 224, 224]), torch.Size([4, 3, 224, 224]), torch.Size([4])]
+        # [img, img, label]
+
         # text_inputs = tokenizer(data[-1], padding='longest', truncation=True, max_length=50, return_tensors="pt") 
         # data[-1] = text_inputs
 
@@ -342,12 +349,18 @@ def test(epoch, model, testloader, evaluator, args, logpath, device, subset):
     model.module.compute_all_class_embeddings(subset=subset.lower())
 
     for idx, data in tqdm(enumerate(testloader), total=len(testloader), desc='Testing on {}'.format(subset)):
-        data  = [d.to(device) for d in data]
+        # split_zhou_OxfordPets.json 파일에 test로 분류된 이미지에서 base인 19개 class에 대한 이미지 수 : 1881
+        # len(testloader) 118 * test batch size 16 = 1888
+        # 마찬가지로, new의 경우
+        # split_zhou_OxfordPets.json 파일에 test로 분류된 이미지에서 new인 18개 class에 대한 이미지 수 : 1788
+        # len(testloader) 112 * test batch size 16 = 1792
+
+        data  = [d.to(device) for d in data] # (img, img, label) # img : (16, 3, 224, 224)
         data[0] = data[0].bfloat16()
         data[1] = data[1].bfloat16()
 
         with torch.inference_mode():
-            _, predictions = model(data, subset=subset.lower())
+            _, predictions = model(data, subset=subset.lower()) # model : LLaMP
         
         predictions = predictions.cpu()
         evaluator.process(predictions, data[-1].cpu())

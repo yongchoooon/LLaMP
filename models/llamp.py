@@ -89,7 +89,7 @@ class LLaMP(nn.Module):
 
         if self.concat_fixed_prompts:
             self.num_special_tokens = 4 + self.num_llm_prompts
-        else:
+        else: # False
             self.num_special_tokens = self.num_llm_prompts
 
         self.prompt_type = args.prompt_type
@@ -123,7 +123,7 @@ class LLaMP(nn.Module):
         self.eos_token_id = self.clip_model.text_model.eos_token_id 
 
         if self.naive_decoding:
-            if args.freeze_vit:
+            if args.freeze_vit: # False
                 self.lora_model = nn.ModuleDict({'default': self.clip_model.vision_model})
                 self.lora_model.requires_grad_(False)
             else:
@@ -131,7 +131,7 @@ class LLaMP(nn.Module):
 
         self.text_hidden_size = self.clip_model.text_model.config.hidden_size
 
-        print("Loading CLIP text embeddings from {}".format(args.clip_text_embed_file))
+        print("Loading CLIP text embeddings from {}".format(args.clip_text_embed_file)) # release_clip_text_embeddings.pt
         text_embeddings = torch.load(os.path.join(self.dset.data_dir, args.clip_text_embed_file))
 
         if type(text_embeddings['base']) == dict:
@@ -269,7 +269,7 @@ class LLaMP(nn.Module):
             self.class_decoder = nn.ModuleList([
                 LoraModel(copy.deepcopy(model.model.layers[i]), {'default': language_peft_config}, 'default')  for i in range(-self.num_decoder_layers, 0)])
             self.class_norm.requires_grad_(False)
-        else:
+        else: # decoder 마지막 레이어만 # 여기서 model은 llama -> 그러니까 llama 디코더의 마지막 레이어만 학습
             self.class_decoder = nn.ModuleList([copy.deepcopy(model.model.layers[i]) for i in range(-self.num_decoder_layers, 0)])
             self.class_decoder.requires_grad_(True)
             self.class_norm.requires_grad_(True)
@@ -288,35 +288,35 @@ class LLaMP(nn.Module):
 
         self.class_embed_weight = nn.Parameter(torch.zeros(1), requires_grad=False)
 
-        if args.learn_class_embed_weight:
+        if args.learn_class_embed_weight: # False
             self.class_embed_weight.requires_grad_(True)
 
-        if args.prompt_learning:
+        if args.prompt_learning: # False
             self.class_decoder.requires_grad_(False)
             self.class_norm.requires_grad_(False)
 
-        if args.freeze_decoder_kv_proj:
+        if args.freeze_decoder_kv_proj: # True
             for decoder in self.class_decoder:
                 decoder.self_attn.k_proj.requires_grad_(False)
                 decoder.self_attn.v_proj.requires_grad_(False)
             
-        if args.freeze_decoder_q_proj:
+        if args.freeze_decoder_q_proj: # False
             for decoder in self.class_decoder:
                 decoder.self_attn.q_proj.requires_grad_(False)
         
-        if args.freeze_decoder_o_proj:
+        if args.freeze_decoder_o_proj: # False
             for decoder in self.class_decoder:
                 decoder.self_attn.o_proj.requires_grad_(False)
         
-        if args.freeze_decoder_attn:
+        if args.freeze_decoder_attn: # False
             for decoder in self.class_decoder:
                 decoder.self_attn.requires_grad_(False) 
         
-        if args.freeze_decoder_ffn:
+        if args.freeze_decoder_ffn: # True
             for decoder in self.class_decoder:
                 decoder.mlp.requires_grad_(False)
         
-        self.class_fn = self.decode_class
+        self.class_fn = self.decode_class # CLIP Text Encoder 부분 정의하는 것
                     
         self.logit_scale = nn.Parameter(torch.tensor([np.log(1/0.01)]), requires_grad=True)
 
@@ -330,21 +330,21 @@ class LLaMP(nn.Module):
 
         if self.training:
             template_idx = torch.randint(self.num_text_template, (1,)).item()
-            if self.token_bias:
+            if self.token_bias: # False
                 selected_embeddings = self.next_token_bias[subset][template_idx]
                 selected_attn_mask = self.next_token_attn_mask[subset][template_idx]
             else:
                 selected_embeddings = None
                 selected_attn_mask = None
 
-            encoded_prompt = self.generate_text_features_from_prompt(
+            encoded_prompt = self.generate_text_features_from_prompt( # 이건 논문 figure에서 h_l을 depth 9개 만큼 text encoder에 넣은 것 
                 pkv[template_idx], 
                 attention_mask[template_idx], 
                 self.class_token[0],
                 selected_embeddings, 
                 selected_attn_mask, 
                 subset=subset
-            )
+            ) # 그래서 이게 논문 figure에서 g_p에 해당함
         else:
             encoded_prompts = []
             for template_idx in range(self.num_text_template):
@@ -367,9 +367,9 @@ class LLaMP(nn.Module):
                     )
                 encoded_prompts.append(encoded_prompt)
 
-            encoded_prompt = torch.stack(encoded_prompts, dim=0)
+            encoded_prompt = torch.stack(encoded_prompts, dim=0) # g_p가 11개 담김
 
-        outputs = ((encoded_prompt, self.text_embeddings[subset]), )
+        outputs = ((encoded_prompt, self.text_embeddings[subset]), ) # 논문 figure에서 g_p, text clip embedding을 의미함
         return outputs
         
 
@@ -377,13 +377,13 @@ class LLaMP(nn.Module):
 
         all_embeds = []
 
-        num_classes = self.text_embeddings[subset].shape[0] 
-        tokens = self.class_proj(class_token)
-        tokens = tokens.unsqueeze(0).expand(num_classes, -1, -1) 
+        num_classes = self.text_embeddings[subset].shape[0] # self.text_embeddings['base'] : (19, 512) , self.text_embeddings['new'] : (18, 512)
+        tokens = self.class_proj(class_token) # self.class_proj : Identity() , class_token : (16, 4096)
+        tokens = tokens.unsqueeze(0).expand(num_classes, -1, -1) # tokens : (19, 16, 4096)
 
         device = tokens.device
 
-        if selected_embeddings is not None:
+        if selected_embeddings is not None: # None
             attention_mask = torch.cat((attention_mask.to(device), selected_attn_mask.to(device), torch.ones((attention_mask.shape[0], tokens.shape[1])).to(device)), dim=1)
 
             tokens = torch.cat([
@@ -392,48 +392,53 @@ class LLaMP(nn.Module):
             ], dim=1)
         else:
             attention_mask = torch.cat((attention_mask.to(device), torch.ones((attention_mask.shape[0], tokens.shape[1])).to(device)), dim=1)
+            # attention_mask : (19, 124), tokens.shape[1] : 16 -> (19, 124)와 (19, 16)을 concat -> (19, 140) => 이건 llm prompt에 대한 attention mask와 class token을 합친 것
+            # 여기서 class_token이 16짜리인 이유는 llm prompt 수도 16개여서
 
-        position_ids = torch.clamp(torch.cumsum(attention_mask, dim=-1).long() - 1, min=0)[:, -tokens.shape[1]:]
+        position_ids = torch.clamp(torch.cumsum(attention_mask, dim=-1).long() - 1, min=0)[:, -tokens.shape[1]:] # attention_mask : (19, 140)인데 여기서 (19, 124)만큼의 index가 담김
 
         attention_mask = _prepare_4d_causal_attention_mask(
             attention_mask, (num_classes, tokens.shape[1]), tokens, pkv.shape[-2]
         )
+        # attention_mask : (19, 1, 16, 140)
 
-        hidden_states = tokens  
+        hidden_states = tokens  # hidden_states : (19, 16, 4096)
 
         past_key_values_length = pkv[0][0].shape[2]
 
-        for idx, decoder_layer in enumerate(self.class_decoder):
+        for idx, decoder_layer in enumerate(self.class_decoder): # self.class_decoder : llama 디코더 마지막 레이어
             layer_outputs = decoder_layer(
-                hidden_states,
-                attention_mask=attention_mask,
-                position_ids=position_ids,
-                past_key_value=pkv[idx],
+                hidden_states, # class_token # TODO : 이게 논문 figure에서 p_l에 해당하는 것으로 추정
+                attention_mask=attention_mask, # llm prompt에 대한 attention mask와 class token을 합친 것 # TODO : 디버그 시 모델에서 required_grad가 True인 것들을 찾고 이름을 봐서 p_l에 해당하는 것을 찾아보자
+                position_ids=position_ids, # llm prompt에 대한 attention mask의 index
+                past_key_value=pkv[idx], 
                 use_cache=False,
                 output_attentions=True
             )
             hidden_states = layer_outputs[0]
 
-        hidden_states = self.class_norm(hidden_states)
+        hidden_states = self.class_norm(hidden_states) # hidden_states가 논문 figure에서 h_l에 해당함 (19, 16, 4096)
 
-        class_embed = hidden_states[:, -self.num_special_tokens:, :]
-        class_embed = self.dropout(class_embed) * self.class_embed_weight.exp()
+        class_embed = hidden_states[:, -self.num_special_tokens:, :] # num_special_tokens : 16 -> 원본 그대로 출력
+        class_embed = self.dropout(class_embed) * self.class_embed_weight.exp() # dropout prob : 0, class_embed_weight : tensor([0.]) (freeze됨) => 그냥 그대로임
 
         for i in range(self.llm_prompt_depth):
-            all_embeds.append(self.text_proj[i](class_embed) + self.llm_prompt_bias[i])
+            all_embeds.append(self.text_proj[i](class_embed) + self.llm_prompt_bias[i]) # -> (19, 16, 512)짜리 9개가 all_embeds에 담김
+            # self.text_proj : Linear(in_features=4096, out_features=512, bias=False) * 9개
+            # self.llm_prompt_bias : tensor (16, 512) * 9개
                 
-        encoded_prompt = self.encode_LLM_prompt(torch.stack(all_embeds, dim=0), subset=subset)
-        return encoded_prompt
+        encoded_prompt = self.encode_LLM_prompt(torch.stack(all_embeds, dim=0), subset=subset) # torch.stack(all_embeds, dim=0) : (9, 19, 16, 512)
+        return encoded_prompt # 이게 논문 figure에서 g_p에 해당함
 
     def encode_LLM_prompt(self, prompts, subset):
 
         device = prompts.device
-        input_ids = self.text_inputs[subset].input_ids.to(device)
-        attention_mask = self.text_inputs[subset].attention_mask.to(device)
+        input_ids = self.text_inputs[subset].input_ids.to(device) # (19, 26), "a photo of a" + classnames을 token화한 것
+        attention_mask = self.text_inputs[subset].attention_mask.to(device) # (19, 26)
         position_ids = None 
 
-        input_shape = input_ids.size()
-        input_ids = input_ids.view(-1, input_shape[-1])
+        input_shape = input_ids.size() # (19, 26)
+        input_ids = input_ids.view(-1, input_shape[-1]) # (19, 26)
 
         if self.prompt_type == 'prefix':
             hidden_states = self.clip_model.text_model.embeddings(input_ids=input_ids[:, self.num_special_tokens:], position_ids=position_ids)
@@ -443,22 +448,22 @@ class LLaMP(nn.Module):
                 hidden_states[:, 1+self.num_text_ctx:, :]
             ], dim=1)
         elif self.prompt_type == 'suffix':
-            hidden_states = self.clip_model.text_model.embeddings(input_ids=input_ids, position_ids=position_ids)
+            hidden_states = self.clip_model.text_model.embeddings(input_ids=input_ids, position_ids=position_ids) # clip text encoder에 (19, 26)짜리 text token을 넣어서 hidden state를 만듦 => (19, 26, 512)
             hidden_states = torch.cat([
-                hidden_states[:, :1, :],
-                self.text_prompts[0].unsqueeze(0).expand(hidden_states.shape[0], -1, -1),
-                hidden_states[:, 1+self.num_text_ctx:-self.num_special_tokens-1, :],
-                prompts[0],
-                hidden_states[self.eos_offset[subset]].unsqueeze(1)
-            ], dim=1)
+                hidden_states[:, :1, :], # bos token으로 추정 (19, 1, 512)
+                self.text_prompts[0].unsqueeze(0).expand(hidden_states.shape[0], -1, -1), # self.text_prompts는 "a photo of a"의 embedding(4, 512)과 정규화된 8개의 embedding(4, 512)이다 => 그래서 "a photo of a"의 embedding으로 사이즈에 맞게 확장시킴 (19, 4, 512) # 이게 논문 figure에서 p_t에 해당하는 것으로 추정
+                hidden_states[:, 1+self.num_text_ctx:-self.num_special_tokens-1, :], # class name에 대한 clip text embedding (19, 4, 512)
+                prompts[0], # h_l의 9개 중 첫 번째 (19, 16, 512)
+                hidden_states[self.eos_offset[subset]].unsqueeze(1) # eos token에 대한 clip text embedding (19, 1, 512)
+            ], dim=1) # => 그래서 이 hidden_states는 논문 figure에서 h_l에 해당함 (19, 26, 512)
 
-        causal_attention_mask = _make_causal_mask(input_shape, hidden_states.dtype, device=hidden_states.device)
+        causal_attention_mask = _make_causal_mask(input_shape, hidden_states.dtype, device=hidden_states.device) # (19, 1, 26, 26) => 대각선 아래는 0, 나머지는 -inf로 채워진 mask
         if attention_mask is not None:
             # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-            attention_mask = _expand_mask(attention_mask, hidden_states.dtype)
+            attention_mask = _expand_mask(attention_mask, hidden_states.dtype) # => (19, 1, 26, 26)로 확장
 
-        for idx, encoder_layer in enumerate(self.clip_model.text_model.encoder.layers):
-            if idx > 0 and idx < self.text_prompt_depth:
+        for idx, encoder_layer in enumerate(self.clip_model.text_model.encoder.layers): # len : 12
+            if idx > 0 and idx < self.text_prompt_depth: # 9
                 if self.prompt_type == 'prefix':
                     if idx < self.llm_prompt_depth:
                         next_prompts = torch.cat([prompts[idx], self.text_prompts[idx].unsqueeze(0).expand(hidden_states.shape[0], -1, -1)], dim=1)
@@ -475,8 +480,8 @@ class LLaMP(nn.Module):
                     ], dim=1)
                     
                 elif self.prompt_type == 'suffix':
-                    if idx < self.llm_prompt_depth:
-                        hidden_states = torch.cat([
+                    if idx < self.llm_prompt_depth: # 9 # 여기에서 idx가 text encoder의 layer index를 의미함 
+                        hidden_states = torch.cat([ # 앞선 9개 레이어에 대해서는 hidden_states에 llm prompt를 넣어줌
                             hidden_states[:, :1, :],
                             self.text_prompts[idx].unsqueeze(0).expand(hidden_states.shape[0], -1, -1),
                             hidden_states[:, 1 + self.num_text_ctx:-self.num_special_tokens-1, :],
@@ -484,21 +489,21 @@ class LLaMP(nn.Module):
                             hidden_states[:, -1:, :]
                         ], dim=1)
                     else:
-                        hidden_states = torch.cat([
+                        hidden_states = torch.cat([ # 이후 3개의 레이어에 대해서는 "a photo of a classname"에 대한 hidden state만 넣어줌
                             hidden_states[:, :1, :],
                             self.text_prompts[idx].unsqueeze(0).expand(hidden_states.shape[0], -1, -1),
                             hidden_states[:, 1 + self.num_text_ctx:, :]
                         ], dim=1)
 
-            layer_outputs = encoder_layer(  
-                hidden_states,
+            layer_outputs = encoder_layer(  # for문을 돌면서 text encoder를 12번 통과함
+                hidden_states, # (19, 26, 512)
                 attention_mask=attention_mask,
                 causal_attention_mask=causal_attention_mask,
             )
 
             hidden_states = layer_outputs[0]
 
-        last_hidden_state = hidden_states
+        last_hidden_state = hidden_states # (19, 26, 512)
         last_hidden_state = self.clip_model.text_model.final_layer_norm(last_hidden_state)
 
         if self.prompt_type == 'prefix':
@@ -511,7 +516,7 @@ class LLaMP(nn.Module):
 
         text_features = self.clip_model.text_projection(pooled_output)
 
-        return text_features
+        return text_features # 이게 논문 figure에서 g_p에 해당함 (a photo of class + llm prompt)
 
     def forward(self, x, subset=None):
         if self.training:
@@ -524,30 +529,31 @@ class LLaMP(nn.Module):
     def compute_all_class_embeddings(self, subset):
 
         outputs = self.class_fn(subset=subset)
-        class_embed = outputs[0]
+        class_embed = outputs[0] # g_p가 11개 담김
 
         self.all_class_embed = class_embed
     
     def extract_image_features(self, img, target="default", dropout=False):
-        if self.visual_prompting:
-            image_features = self.extract_prompt_image_features(img, model=self.lora_model[target])
+        if self.visual_prompting: # True
+            image_features = self.extract_prompt_image_features(img, model=self.lora_model[target]) # self.lora_model['default'] : CLIP image encoder, 뒤 6개 레이어는 lora 붙음
         else:
             image_features = self.lora_model[target](img)[1]
             if dropout:
                 image_features = self.image_dropout(image_features)
             image_features = self.clip_model.visual_projection(image_features)
-        return image_features
+        return image_features # 이게 논문 figure에서 f_p에 해당함
     
     def extract_prompt_image_features(self, img, model, dropout=False):
         hidden_states = model.embeddings(img)
-        hidden_states = torch.cat([hidden_states, self.visual_prompts[0].unsqueeze(0).expand(hidden_states.shape[0], -1, -1)], dim=1)
-        hidden_states = model.pre_layrnorm(hidden_states)
+        hidden_states = torch.cat([hidden_states, self.visual_prompts[0].unsqueeze(0).expand(hidden_states.shape[0], -1, -1)], dim=1) # self.visual_prompts가 논문 figure에서 p_v에 해당함
+        hidden_states = model.pre_layrnorm(hidden_states) # hidden_states : (4, 201, 768) , => 아직 이건 encoder layer에는 통과 안 함
 
-        len_vpt = self.visual_prompts.shape[1]
+        len_vpt = self.visual_prompts.shape[1] # self.visual_prompts : (6, 4, 768)
 
-        for idx, encoder_layer in enumerate(model.encoder.layers):
-            if idx > 0 and idx < self.visual_prompt_depth:
+        for idx, encoder_layer in enumerate(model.encoder.layers): # 12개
+            if idx > 0 and idx < self.visual_prompt_depth: # visual_prompt_depth : 6
                 hidden_states = torch.cat([hidden_states[:, :-len_vpt], self.visual_prompts[idx].unsqueeze(0).expand(hidden_states.shape[0], -1, -1)], dim=1)
+                # hidden_states[:, :-len_vpt] : (4, 197, 768) , self.visual_prompts[idx]가 idx번째 layer에 입력되는 p_v를 의미함 (4, 768) -> (4, 4, 768)
                 
             layer_outputs = encoder_layer(
                 hidden_states,
@@ -557,7 +563,7 @@ class LLaMP(nn.Module):
 
             hidden_states = layer_outputs[0]
 
-        last_hidden_states = hidden_states
+        last_hidden_states = hidden_states # (4, 201, 768)
         pooled_output = last_hidden_states[:, 0, :]
         pooled_output = model.post_layernorm(pooled_output)
 
@@ -569,7 +575,7 @@ class LLaMP(nn.Module):
         if self.training:
             img, img_1, labels = x
         else:
-            img = x[0]
+            img = x[0] # img : (4, 3, 224, 224)
 
         self.logit_scale.data = torch.clamp(self.logit_scale.data, 0, 4.605)
 
@@ -583,48 +589,49 @@ class LLaMP(nn.Module):
             if self.few_shot:
                 embeds['llm'], embeds['clip'] = self.class_fn(subset='all')[0]
             else:
-                embeds['llm'], embeds['clip'] = self.class_fn(subset='base')[0]
+                embeds['llm'], embeds['clip'] = self.class_fn(subset='base')[0] # embeds['llm'] : 논문 figure에서 g_p에 해당함 (a photo of class + llm prompt)
         else:
-            embeds['llm'], embeds['clip'] = self.all_class_embed
+            embeds['llm'], embeds['clip'] = self.all_class_embed # self.all_class_embed : g_p가 11개 담긴 것, clip text embedding
 
         embeds['all'] = embeds['llm']
 
-        raw_clip_embeds = embeds['clip']
-        raw_llm_embeds = embeds['llm']
+        raw_clip_embeds = embeds['clip'] # clip embedding (?)
+        raw_llm_embeds = embeds['llm'] # g_p (a photo of class + llm prompt)
 
-        for k, v in embeds.items():
-            if embeds[k].ndim == 3:
+        for k, v in embeds.items(): # llm, clip, all
+            if embeds[k].ndim == 3: # 2
                 embeds[k] = normalize_fn(v).permute(0, 2, 1)
-            else:
+            else: # (19, 512) -> (512, 19)
                 embeds[k] = normalize_fn(v).permute(1, 0)
 
         if self.training:
             with torch.inference_mode():
-                orig_image_features = self.clip_model.vision_model(img_1)[1]
+                orig_image_features = self.clip_model.vision_model(img_1)[1] # img_1 : (4, 3, 224, 224)
                 orig_image_features = self.clip_model.visual_projection(orig_image_features)
+                # orig_image_features : (4, 512)
 
         target_pred = {}
         if self.training:
-            class_features = self.extract_image_features(img)
-            image_features = class_features
+            class_features = self.extract_image_features(img) # img : (4, 3, 224, 224) # class_features : 이게 논문 figure에서 f_p에 해당함
+            image_features = class_features # image_features : 이게 논문 figure에서 f_p에 해당함
             target_pred['clip'] = normalize_fn(image_features) @ embeds['clip']
             if image_features.ndim != embeds['llm'].ndim:
                 image_features = image_features.unsqueeze(0)
             target_pred['llm'] = torch.matmul(normalize_fn(image_features), embeds['llm'])
             target_pred['all'] = torch.matmul(normalize_fn(image_features), embeds['all'])
-            clip_pred = normalize_fn(orig_image_features) @ embeds['clip'] 
+            clip_pred = normalize_fn(orig_image_features) @ embeds['clip'] # 논문 수식에서 f^*g^에 해당함 # TODO : 여기서 embeds['clip']은 어떤 텍스트의 임베딩인가?
 
                 
-            target_pred['clip'] = target_pred['clip'].float()
-            target_pred['llm'] = target_pred['llm'].float()
-            target_pred['all'] = target_pred['all'].float()
-            clip_pred = clip_pred.float()
+            target_pred['clip'] = target_pred['clip'].float() # clip text embedding과 image feature(p_v 포함)의 내적값
+            target_pred['llm'] = target_pred['llm'].float() # (a photo of class + llm prompt)와 image feature의 내적값
+            target_pred['all'] = target_pred['all'].float() # (a photo of class + llm prompt)와 image feature의 내적값
+            clip_pred = clip_pred.float() # clip text embedding과 원본 image feature의 내적값 # 논문 수식에서 f^*g^에 해당함
             raw_clip_embeds = raw_clip_embeds.float()
             raw_llm_embeds = raw_llm_embeds.float()
             image_features = image_features.float()
             orig_image_features = orig_image_features.float()
         else:
-            class_features = self.extract_image_features(img)
+            class_features = self.extract_image_features(img) # class_features : 이게 논문 figure에서 f_p에 해당함
             image_features = class_features
             if image_features.ndim != embeds['llm'].ndim:
                 image_features = image_features.unsqueeze(0)
@@ -632,12 +639,14 @@ class LLaMP(nn.Module):
             target_pred['all'] = target_pred['all'].float()
                     
         if self.training:
-            base_loss = self.base_loss(target_pred['all'] * logit_scale, labels)
+            base_loss = self.base_loss(target_pred['all'] * logit_scale, labels) # CE Loss : 논문 figure에서 g_p와 f_p
             feature_l1_loss = F.l1_loss(normalize_fn(raw_clip_embeds), normalize_fn(raw_llm_embeds)) * 25
             feature_l1_loss += F.l1_loss(normalize_fn(image_features), normalize_fn(orig_image_features)) * 10
+            # clip text embedding과 g_p(a photo of class + llm prompt)의 l1 loss + image feature(p_v포함)와 원본 image feature의 l1 loss
             
-            if self.distillation_type == 'soft':
+            if self.distillation_type == 'soft': # soft
                 dist_loss = F.kl_div(F.log_softmax(target_pred['all'] * logit_scale, dim=-1), F.log_softmax(clip_pred * logit_scale, dim=-1),reduction='sum', log_target=True) / target_pred['all'].numel() * self.lambda_dist
+                # 논문 수식에서 f_p*g_p와 f^*g^의 KL Divergence # self.lambda_dist : 2.5
             elif self.distillation_type == 'hard':
                 dist_loss = F.cross_entropy(target_pred['all'] * logit_scale, clip_pred.argmax(dim=-1), reduction='mean') * self.lambda_dist
         
